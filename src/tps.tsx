@@ -195,8 +195,24 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       let lastToken = 0
       let captured = false
       let ended = 0
+      let stepMessageID: string | undefined
+      let stepEventCreated: number | undefined
+      let stepEventAt = 0
+      let stepMessageCreated: number | undefined
 
       const now = () => performance.now()
+
+      const resolveStepCreated = () => {
+        if (stepMessageCreated !== undefined || !stepMessageID) return stepMessageCreated
+        const message = data.session.message.list(id).find((item) => item.id === stepMessageID)
+        if (message) stepMessageCreated = message.time.created
+        return stepMessageCreated
+      }
+
+      const stepTtft = (at: number) => {
+        if (stepMessageCreated === undefined || stepEventCreated === undefined) return undefined
+        return Math.max(0, at - stepEventAt + (stepEventCreated - stepMessageCreated))
+      }
 
       const recompute = () => {
         const at = now()
@@ -215,7 +231,11 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
         setHistory((previous) => [...previous.slice(-(BARS - 1)), value])
       }
 
-      const start = (at: number, fromEvent: boolean) => {
+      const start = (
+        at: number,
+        fromEvent: boolean,
+        meta?: { messageID?: string; created?: number },
+      ) => {
         running = true
         started = at
         firstToken = undefined
@@ -223,6 +243,10 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
         ended = 0
         captured = fromEvent
         samples = []
+        stepMessageID = meta?.messageID
+        stepEventCreated = meta?.created
+        stepEventAt = meta ? at : 0
+        stepMessageCreated = undefined
         setExact(false)
         setPhase("running")
         setStepTokens(undefined)
@@ -236,7 +260,10 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
 
       const delta = (text: string, at: number) => {
         if (!running) start(at, false)
-        if (captured && ttft() === undefined) setTtft(Math.max(0, at - started))
+        if (captured && ttft() === undefined) {
+          const value = stepTtft(at)
+          if (value !== undefined) setTtft(value)
+        }
         const tokens = estimateTokens(text)
         firstToken ??= at
         lastToken = at
@@ -271,7 +298,10 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       const offs = [
         data.on("session.step.started", (event) => {
           if (event.data.sessionID !== id) return
-          start(now(), true)
+          start(now(), true, {
+            messageID: event.data.assistantMessageID,
+            created: event.created,
+          })
         }),
         data.on("session.text.delta", (event) => {
           if (event.data.sessionID !== id) return
@@ -306,6 +336,11 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
             setPhase("running")
           } else {
             recompute()
+          }
+          if (captured && ttft() === undefined && firstToken !== undefined) {
+            resolveStepCreated()
+            const value = stepTtft(firstToken)
+            if (value !== undefined) setTtft(value)
           }
         }
 

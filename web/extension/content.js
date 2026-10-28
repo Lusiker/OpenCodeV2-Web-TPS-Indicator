@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.2.3
+// @version      1.2.4
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -607,6 +607,10 @@
     stepMs: undefined,
     stepPeak: undefined,
     ttft: undefined,
+    stepCreated: undefined,
+    stepEventCreated: undefined,
+    stepEventAt: 0,
+    stepMessageID: undefined,
     stepEst: 0,
     lastRate: undefined,
     history: [],
@@ -660,6 +664,66 @@
   function currentSession() {
     const match = location.pathname.match(/\/session\/(ses_[A-Za-z0-9]+)/)
     return match?.[1]
+  }
+
+  const stepCreatedCache = new Map()
+  const stepCreatedRequests = new Map()
+
+  function loadStepCreated(session, messageID) {
+    if (!session || !messageID) return Promise.resolve(undefined)
+    if (stepCreatedCache.has(messageID)) return Promise.resolve(stepCreatedCache.get(messageID))
+    if (stepCreatedRequests.has(messageID)) return stepCreatedRequests.get(messageID)
+
+    const request = (async () => {
+      try {
+        const response = await fetch(
+          `/api/session/${encodeURIComponent(session)}/message?order=desc&limit=5`,
+          { credentials: "include" },
+        )
+        if (!response.ok) return undefined
+        const body = await response.json()
+        const messages = Array.isArray(body) ? body : body.data
+        if (!Array.isArray(messages)) return undefined
+        const message = messages.find((item) => item.id === messageID)
+        const created = message?.time?.created
+        if (typeof created !== "number") return undefined
+        if (stepCreatedCache.size > 50) stepCreatedCache.clear()
+        stepCreatedCache.set(messageID, created)
+        return created
+      } catch {
+        return undefined
+      }
+    })()
+
+    stepCreatedRequests.set(messageID, request)
+    void request.finally(() => stepCreatedRequests.delete(messageID))
+    return request
+  }
+
+  function hydrateStepCreated(messageID, attempt = 0) {
+    const session = state.session
+    void loadStepCreated(session, messageID).then((created) => {
+      if (state.session !== session || state.stepMessageID !== messageID) return
+      if (created === undefined) {
+        if (attempt < 5 && state.active && state.ttft === undefined) {
+          setTimeout(() => hydrateStepCreated(messageID, attempt + 1), 300)
+        }
+        return
+      }
+      state.stepCreated = created
+      if (state.firstToken !== undefined) {
+        state.ttft = stepTtft(state.firstToken)
+        render()
+      }
+    })
+  }
+
+  function stepTtft(at) {
+    if (state.stepCreated === undefined || state.stepEventCreated === undefined) return undefined
+    return Math.max(
+      0,
+      at - state.stepEventAt + (state.stepEventCreated - state.stepCreated),
+    )
   }
 
   function formatLatency(ms) {
@@ -733,6 +797,10 @@
     state.stepMs = undefined
     state.stepPeak = undefined
     state.ttft = undefined
+    state.stepCreated = undefined
+    state.stepEventCreated = undefined
+    state.stepEventAt = 0
+    state.stepMessageID = undefined
     state.stepEst = 0
     state.lastRate = undefined
     state.history = []
@@ -765,7 +833,7 @@
     render()
   }
 
-  function startStep(captured = false) {
+  function startStep(captured = false, meta) {
     state.active = true
     state.started = now()
     state.firstToken = undefined
@@ -776,17 +844,28 @@
     state.stepMs = undefined
     state.stepPeak = undefined
     state.ttft = undefined
+    state.stepCreated = undefined
+    state.stepEventCreated = meta?.created
+    state.stepEventAt = meta ? now() : 0
+    state.stepMessageID = meta?.messageID
     state.stepEst = 0
     state.phase = "running"
     state.capturedStart = captured
     render()
+
+    if (meta?.messageID) void hydrateStepCreated(meta.messageID)
   }
 
   function addDelta(text) {
     if (!state.active) startStep(false)
     const at = now()
     if (state.capturedStart && state.ttft === undefined) {
-      state.ttft = Math.max(0, at - state.started)
+      const value = stepTtft(at)
+      if (value !== undefined) {
+        state.ttft = value
+      } else if (state.stepMessageID) {
+        void hydrateStepCreated(state.stepMessageID)
+      }
     }
     const tokens = estimateTokens(text ?? "")
     state.firstToken ??= at
@@ -1162,7 +1241,10 @@
 
     switch (event.type) {
       case "session.step.started":
-        startStep(true)
+        startStep(true, {
+          messageID: event.data.assistantMessageID,
+          created: event.created,
+        })
         break
       case "session.text.delta":
       case "session.reasoning.delta":
