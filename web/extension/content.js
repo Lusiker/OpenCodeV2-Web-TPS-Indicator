@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.2.2
+// @version      1.2.3
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -30,55 +30,95 @@
   const SPAN_MS = 30000
   const MAX_SAMPLES = 220
 
-  const rawLocale =
-    localStorage.getItem("oc_locale") ||
-    document.documentElement.lang ||
-    navigator.language ||
-    "en"
-  const zh = /^zh/i.test(rawLocale)
-  const copy = zh
-    ? {
-        label: "TPS",
-        unit: "tok/s",
-        live: "实时输出速度",
-        done: "上一段输出速度",
-        running: "等待模型输出",
-        statPeak: "峰值",
-        statAvg: "均值",
-        statTtft: "首字",
-        statStep: "本段",
-        statTime: "耗时",
-        statWindow: "窗口",
-        windowShort: "2.0 s",
-        chartLabel: "最近 30 秒",
-        pinOn: "固定面板",
-        pinOff: "取消固定",
-        noteLive: "根据流式文本、推理与工具参数估算。",
-        noteExact: "根据本段 token 用量计算。",
-        noteRunning: "模型仍在工作，显示最近一次测得的速度。",
-        aria: (rate) => `输出速度：每秒 ${rate} 个 token`,
-      }
-    : {
-        label: "TPS",
-        unit: "tok/s",
-        live: "Live output speed",
-        done: "Last output speed",
-        running: "Waiting for model output",
-        noteLive: "Estimated from streamed text, reasoning and tool arguments.",
-        noteExact: "Computed from the step's token usage.",
-        noteRunning: "The latest measured speed while the model is working.",
-        statPeak: "Peak",
-        statAvg: "Average",
-        statTtft: "First token",
-        statStep: "Step tokens",
-        statTime: "Duration",
-        statWindow: "Window",
-        windowShort: "2.0 s",
-        chartLabel: "Last 30 s",
-        pinOn: "Pin panel",
-        pinOff: "Unpin panel",
-        aria: (rate) => `Output speed: ${rate} tokens per second`,
-      }
+  function cookieValue(name) {
+    for (const part of document.cookie.split(";")) {
+      const [key, ...rest] = part.trim().split("=")
+      if (key === name) return decodeURIComponent(rest.join("="))
+    }
+    return undefined
+  }
+
+  function resolveLocale() {
+    const raw = (
+      cookieValue("oc_locale") ||
+      document.documentElement.lang ||
+      navigator.language ||
+      "en"
+    ).toLowerCase()
+    if (raw === "zht" || raw.startsWith("zh-hant") || raw.startsWith("zh-tw")) return "zht"
+    if (raw.startsWith("zh-hk") || raw.startsWith("zh-mo")) return "zht"
+    if (raw.startsWith("zh")) return "zh"
+    return "en"
+  }
+
+  const dictionaries = {
+    zh: {
+      label: "TPS",
+      unit: "tok/s",
+      live: "实时输出速度",
+      done: "上一段输出速度",
+      running: "等待模型输出",
+      statPeak: "峰值",
+      statAvg: "均值",
+      statTtft: "首字",
+      statStep: "本段",
+      statTime: "耗时",
+      statWindow: "窗口",
+      windowShort: "2.0 s",
+      chartLabel: "最近 30 秒",
+      pinOn: "固定面板",
+      pinOff: "取消固定",
+      noteLive: "根据流式文本、推理与工具参数估算。",
+      noteExact: "根据本段 token 用量计算。",
+      noteRunning: "模型仍在工作，显示最近一次测得的速度。",
+      aria: (rate) => `输出速度：每秒 ${rate} 个 token`,
+    },
+    zht: {
+      label: "TPS",
+      unit: "tok/s",
+      live: "即時輸出速度",
+      done: "上一段輸出速度",
+      running: "等待模型輸出",
+      statPeak: "峰值",
+      statAvg: "均值",
+      statTtft: "首字",
+      statStep: "本段",
+      statTime: "耗時",
+      statWindow: "視窗",
+      windowShort: "2.0 s",
+      chartLabel: "最近 30 秒",
+      pinOn: "固定面板",
+      pinOff: "取消固定",
+      noteLive: "根據串流文字、推理與工具參數估算。",
+      noteExact: "根據本段 token 用量計算。",
+      noteRunning: "模型仍在運作，顯示最近一次測得的速度。",
+      aria: (rate) => `輸出速度：每秒 ${rate} 個 token`,
+    },
+    en: {
+      label: "TPS",
+      unit: "tok/s",
+      live: "Live output speed",
+      done: "Last output speed",
+      running: "Waiting for model output",
+      noteLive: "Estimated from streamed text, reasoning and tool arguments.",
+      noteExact: "Computed from the step's token usage.",
+      noteRunning: "The latest measured speed while the model is working.",
+      statPeak: "Peak",
+      statAvg: "Average",
+      statTtft: "First token",
+      statStep: "Step tokens",
+      statTime: "Duration",
+      statWindow: "Window",
+      windowShort: "2.0 s",
+      chartLabel: "Last 30 s",
+      pinOn: "Pin panel",
+      pinOff: "Unpin panel",
+      aria: (rate) => `Output speed: ${rate} tokens per second`,
+    },
+  }
+
+  let locale = resolveLocale()
+  let copy = dictionaries[locale]
 
   const css = `
     :host {
@@ -555,6 +595,8 @@
   const stats = Object.fromEntries(
     [...shadow.querySelectorAll(".stat .v")].map((node) => [node.dataset.k, node]),
   )
+  const statKeys = [...shadow.querySelectorAll(".stat .k")]
+  const chartSpan = shadow.querySelector(".chart-span")
 
   const state = {
     session: undefined,
@@ -1023,6 +1065,25 @@
     }, 140)
   }
 
+  function applyCopy() {
+    const keys = [
+      copy.statPeak,
+      copy.statAvg,
+      copy.statTtft,
+      copy.statStep,
+      copy.statTime,
+      copy.statWindow,
+    ]
+    statKeys.forEach((node, index) => {
+      node.textContent = keys[index]
+    })
+    chartSpan.textContent = copy.chartLabel
+    const pinLabel = pinned ? copy.pinOff : copy.pinOn
+    pinButton.title = pinLabel
+    pinButton.setAttribute("aria-label", pinLabel)
+    render()
+  }
+
   function setPinned(next) {
     pinned = next
     tip.dataset.pinned = next ? "true" : "false"
@@ -1147,6 +1208,18 @@
     pushSample()
     render()
   }, TICK_MS)
+
+  const localeObserver = new MutationObserver(() => {
+    const next = resolveLocale()
+    if (next === locale) return
+    locale = next
+    copy = dictionaries[next]
+    applyCopy()
+  })
+  localeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["lang"],
+  })
 
   setInterval(ensure, 500)
   window.addEventListener("popstate", ensure)

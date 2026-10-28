@@ -48,6 +48,12 @@ OpenCode 有两套前端宿主，插件分别以不同方式接入。
 - 网页版从会话标题节点向上查找包含 `[data-component="progress-circle"]` 的祖先，把标签插入其触发容器之后；节点被替换时由 500 ms 定时器重新挂载。
 - 网页版对页面的识别依据应用根节点上的 `bg-v2-` 类、进度环或页面标题，其他站点直接退出，不建立连接。
 
+## 语言
+
+- 原生插件通过 `ctx.locale` 订阅 OpenCode 的 locale，文案覆盖 `en`、`zh`、`zht`，随设置实时切换。
+- 网页版依次读取 `oc_locale` cookie、`<html lang>` 与 `navigator.language`，映射到 `zh`、`zht`、`en`。
+- 网页版监听 `<html lang>` 变化，切换语言后立即刷新统计字段、图注与提示文案，无需刷新页面。
+
 ## 固定交互
 
 面板有 `hover` 与 `pinned` 两种显示状态，由 `data-pinned` 与 `data-open` 两个属性表达。
