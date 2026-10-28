@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.cjs text
+*.png binary
+web/tps-meter-extension.zip binary
+web/extension/content.js linguist-generated
+dist/gui-experimental.cjs linguist-generated

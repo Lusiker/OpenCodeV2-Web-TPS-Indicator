@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenCode TPS Meter</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080808;
+        --layer: #121212;
+        --border: rgba(255, 255, 255, 0.12);
+        --text: #f2f2f2;
+        --muted: #8a8a8a;
+        --faint: #666;
+        --green: #22c55e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(600px 300px at 50% -10%, rgba(34, 197, 94, 0.08), transparent 70%),
+          var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      main {
+        width: min(560px, calc(100vw - 32px));
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+        box-shadow: 0 24px 80px -40px rgba(0, 0, 0, 0.9);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 18px;
+        font-weight: 620;
+        letter-spacing: -0.02em;
+      }
+      p { margin: 0 0 18px; color: var(--muted); }
+      .preview {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 22px 0;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .ring {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(255, 255, 255, 0.16);
+        border-top-color: var(--text);
+        transform: rotate(-45deg);
+      }
+      .ring-label { color: var(--faint); font-size: 12px; }
+      .tag {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 22px;
+        padding: 0 7px 0 6px;
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--green) 32%, var(--border));
+        border-radius: 6px;
+        background: linear-gradient(180deg, rgba(34, 197, 94, 0.09), rgba(34, 197, 94, 0.03));
+        color: var(--text);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      .dot {
+        position: relative;
+        width: 4px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--green);
+      }
+      .dot::after {
+        content: "";
+        position: absolute;
+        inset: -3px;
+        border: 1px solid var(--green);
+        border-radius: inherit;
+        animation: ring 1.8s ease-out infinite;
+      }
+      .label { color: var(--faint); font-size: 8.5px; font-weight: 650; letter-spacing: 0.09em; }
+      .value { min-width: 2.3em; font-size: 11.5px; font-weight: 600; text-align: end; }
+      .unit { color: var(--faint); font-size: 9px; }
+      .bars { display: inline-flex; align-items: flex-end; gap: 1.5px; width: 11px; height: 9px; }
+      .bars i { width: 2px; height: 100%; border-radius: 1px; background: var(--green); transform-origin: 50% 100%; }
+      .bars i:nth-child(1) { transform: scaleY(0.35); opacity: 0.7; }
+      .bars i:nth-child(2) { transform: scaleY(0.62); opacity: 0.8; }
+      .bars i:nth-child(3) { transform: scaleY(0.48); opacity: 0.75; }
+      .bars i:nth-child(4) { transform: scaleY(0.86); opacity: 0.9; }
+      .bars i:nth-child(5) { transform: scaleY(1); opacity: 1; }
+      .scan {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(105deg, transparent 28%, rgba(34, 197, 94, 0.16) 48%, transparent 68%);
+        transform: translateX(-130%);
+        animation: scan 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      .panel {
+        width: 240px;
+        margin: 0 0 22px;
+        padding: 10px 12px 11px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: var(--layer);
+        box-shadow: 0 18px 50px -30px rgba(0, 0, 0, 0.9);
+        font-size: 11px;
+        line-height: 1.3;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        line-height: 1;
+      }
+      .panel-head .pin {
+        margin-inline-start: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border: 1px solid color-mix(in srgb, var(--green) 34%, transparent);
+        border-radius: 5px;
+        background: color-mix(in srgb, var(--green) 13%, transparent);
+        color: var(--green);
+      }
+      .panel-head .pin svg { width: 11px; height: 11px; }
+      .panel-value {
+        display: flex;
+        align-items: baseline;
+        gap: 5px;
+        font-size: 21px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+      .panel-unit { color: var(--faint); font-size: 10px; font-weight: 500; letter-spacing: 0; }
+      .panel-chart { display: block; width: 100%; height: 52px; overflow: visible; }
+      .panel-chart .grid {
+        stroke: var(--border);
+        stroke-dasharray: 2 3;
+        stroke-width: 1;
+        vector-effect: non-scaling-stroke;
+      }
+      .panel-chart .line {
+        fill: none;
+        stroke: var(--green);
+        stroke-width: 1.4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .panel-chart .edge {
+        fill: var(--green);
+        stroke: var(--layer);
+        stroke-width: 1.5;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 6px 14px;
+        padding-block-start: 8px;
+        border-block-start: 1px solid var(--border);
+        color: var(--faint);
+        font-size: 10px;
+      }
+      .stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .stat strong {
+        color: var(--text);
+        font-size: 11px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .panel-note { color: var(--faint); font-size: 10px; line-height: 1.45; }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 38px;
+        padding: 0 16px;
+        border-radius: 8px;
+        background: var(--text);
+        color: #080808;
+        font-weight: 600;
+        text-decoration: none;
+        transition: transform 120ms ease, opacity 120ms ease;
+      }
+      a.button:hover { opacity: 0.88; transform: translateY(-1px); }
+      a.button:active { transform: translateY(0); }
+      a.button.secondary {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+      .hint { margin: 16px 0 0; color: var(--faint); font-size: 12px; }
+      code {
+        padding: 2px 5px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--muted);
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 11px;
+      }
+      @keyframes ring {
+        0% { opacity: 0.45; transform: scale(0.7); }
+        70%, 100% { opacity: 0; transform: scale(1.7); }
+      }
+      @keyframes scan {
+        0% { transform: translateX(-130%); }
+        58%, 100% { transform: translateX(130%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .dot::after, .scan { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>OpenCode TPS Meter</h1>
+      <p>
+        在会话页右上角的上下文进度环旁显示实时 token/s。悬停展开面板，查看近 30 秒波动、峰值、均值、
+        首字延迟与本段 token 数；点击标签可把面板固定为常驻，再次点击关闭。
+      </p>
+
+      <div class="preview" aria-hidden="true">
+        <span class="ring"></span>
+        <span class="ring-label">350k</span>
+        <span class="tag">
+          <span class="dot"></span>
+          <span class="label">TPS</span>
+          <span class="value">128.4</span>
+          <span class="unit">tok/s</span>
+          <span class="bars"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="scan"></span>
+        </span>
+      </div>
+
+      <div class="panel" aria-hidden="true">
+        <div class="panel-head">
+          <span class="dot"></span>
+          <span class="panel-heading">实时输出速度</span>
+          <span class="pin" title="固定面板">
+            <svg viewBox="0 0 16 16">
+              <path d="M8 1.9a4.7 4.7 0 0 0-4.7 4.7c0 3.4 4.7 7.5 4.7 7.5s4.7-4.1 4.7-7.5A4.7 4.7 0 0 0 8 1.9Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+              <circle cx="8" cy="6.5" r="1.6" fill="currentColor"/>
+            </svg>
+          </span>
+        </div>
+        <div class="panel-value"><span>128.4</span><span class="panel-unit">tok/s</span></div>
+        <svg class="panel-chart" viewBox="0 0 214 52">
+          <defs>
+            <linearGradient id="demo-area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#22c55e" stop-opacity="0.3"/>
+              <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <line class="grid" x1="0" y1="1" x2="214" y2="1"/>
+          <path class="area" fill="url(#demo-area)" d="M0 44 L18 40 L34 46 L52 30 L70 34 L88 22 L106 26 L124 14 L142 20 L160 9 L178 16 L196 12 L214 18 L214 52 L0 52 Z"/>
+          <path class="line" d="M0 44 L18 40 L34 46 L52 30 L70 34 L88 22 L106 26 L124 14 L142 20 L160 9 L178 16 L196 12 L214 18"/>
+          <circle class="edge" cx="214" cy="18" r="2.4"/>
+        </svg>
+        <div class="stats">
+          <div class="stat"><span>峰值</span><strong>164.2</strong></div>
+          <div class="stat"><span>均值</span><strong>121.0</strong></div>
+          <div class="stat"><span>首字</span><strong>412 ms</strong></div>
+          <div class="stat"><span>本段</span><strong>1,284</strong></div>
+          <div class="stat"><span>耗时</span><strong>10.6 s</strong></div>
+          <div class="stat"><span>窗口</span><strong>2.0 s</strong></div>
+        </div>
+        <div class="panel-note">根据流式文本、推理与工具参数估算。</div>
+      </div>
+
+      <div class="actions">
+        <a class="button" href="tps-meter.user.js">安装用户脚本</a>
+        <a class="button secondary" href="tps-meter-extension.zip">下载浏览器扩展</a>
+      </div>
+      <p class="hint">
+        用户脚本需要先安装 Tampermonkey 或 Violentmonkey。安装后刷新 OpenCode 会话页即可。
+      </p>
+      <p class="hint">
+        扩展安装：解压下载的 zip，打开 <code>chrome://extensions</code>，启用开发者模式，
+        点击「加载已解压的扩展程序」，选择解压后的 <code>extension</code> 目录。
+        加载完成后刷新已经打开的 OpenCode 标签页。
+      </p>
+      <p class="hint">
+        原生 GUI 插件位于 <code>../dist/gui-experimental.cjs</code>，适用于 OpenCode Desktop 2.2.0 及以上版本。
+      </p>
+    </main>
+  </body>
+</html>
