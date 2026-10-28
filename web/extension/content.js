@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.2.1
+// @version      1.2.2
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -592,16 +592,27 @@
   }
 
   function formatRate(value) {
+    if (Math.abs(value) >= 1_000) return formatCount(value)
     if (value >= 100) return Math.round(value).toLocaleString()
     return value.toFixed(1)
   }
 
-  function formatTokens(value) {
+  function formatCount(value) {
+    const magnitude = Math.abs(value)
+    if (magnitude >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`
+    if (magnitude >= 1_000) return `${(value / 1_000).toFixed(2)}K`
     return Math.round(value).toLocaleString()
   }
 
+  function formatTokens(value) {
+    return formatCount(value)
+  }
+
   function formatSeconds(ms) {
-    return (ms / 1000).toFixed(ms < 10000 ? 1 : 0)
+    const seconds = ms / 1000
+    if (seconds >= 3_600) return `${(seconds / 3_600).toFixed(2)} h`
+    if (seconds >= 60) return `${(seconds / 60).toFixed(1)} min`
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`
   }
 
   function currentSession() {
@@ -611,7 +622,9 @@
 
   function formatLatency(ms) {
     if (ms < 1000) return `${Math.round(ms)} ms`
-    return `${(ms / 1000).toFixed(2)} s`
+    const seconds = ms / 1000
+    if (seconds >= 60) return `${(seconds / 60).toFixed(2)} min`
+    return `${seconds.toFixed(2)} s`
   }
 
   function render() {
@@ -655,7 +668,7 @@
     stats.avg.textContent = stepAvg ? formatRate(stepAvg) : "—"
     stats.ttft.textContent = state.ttft !== undefined ? formatLatency(state.ttft) : "—"
     stats.step.textContent = stepTokens > 0 ? formatTokens(stepTokens) : "—"
-    stats.time.textContent = stepMs > 0 ? `${formatSeconds(stepMs)} s` : "—"
+    stats.time.textContent = stepMs > 0 ? formatSeconds(stepMs) : "—"
 
     tipNote.textContent =
       state.phase === "live"

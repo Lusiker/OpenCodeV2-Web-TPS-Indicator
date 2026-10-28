@@ -47,12 +47,17 @@ function firstOutputTime(message: SessionMessageAssistant): number | undefined {
 
 function duration(ms: number): string {
   if (ms < 1_000) return `${Math.max(1, Math.round(ms))} ms`
-  return `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} s`
+  const seconds = ms / 1_000
+  if (seconds >= 3_600) return `${(seconds / 3_600).toFixed(2)} h`
+  if (seconds >= 60) return `${(seconds / 60).toFixed(1)} min`
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`
 }
 
 function latency(ms: number): string {
   if (ms < 1_000) return `${Math.round(ms)} ms`
-  return `${(ms / 1_000).toFixed(2)} s`
+  const seconds = ms / 1_000
+  if (seconds >= 60) return `${(seconds / 60).toFixed(2)} min`
+  return `${seconds.toFixed(2)} s`
 }
 
 export function TpsMeter(props: { session: MountedSession; active: boolean }) {
@@ -90,10 +95,29 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       }),
   )
 
-  const formatRate = (value: number) =>
-    value >= 100 ? number().format(value) : decimal().format(value)
+  const compact = createMemo(
+    () =>
+      new Intl.NumberFormat(locale(), {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+  )
 
-  const formatTokens = (value: number) => number().format(value)
+  const formatCompact = (value: number) => {
+    const magnitude = Math.abs(value)
+    if (magnitude >= 1_000_000) return `${compact().format(value / 1_000_000)}M`
+    if (magnitude >= 1_000) return `${compact().format(value / 1_000)}K`
+    return number().format(value)
+  }
+
+  const formatRate = (value: number) =>
+    Math.abs(value) >= 1_000
+      ? formatCompact(value)
+      : value >= 100
+        ? number().format(value)
+        : decimal().format(value)
+
+  const formatTokens = (value: number) => formatCompact(value)
 
   const completed = createMemo(() => {
     const data = props.session.server.data
