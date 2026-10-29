@@ -528,14 +528,28 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
   const marksView = createMemo(() => {
     if (!verbose()) return []
     const { from, span } = chartWindow()
+    const placed: { x: number; level: number }[] = []
+    const maxLevel = 3
     return marks()
       .filter((item) => item.at >= from)
-      .map((item) => ({
-        kind: item.kind,
-        x: Math.min(214, Math.max(0, ((item.at - from) / span) * 214)),
-        d: MARK_ICONS[item.kind],
-        label: ctx.t(MARK_LABELS[item.kind]),
-      }))
+      .map((item) => {
+        const x = Math.min(214, Math.max(0, ((item.at - from) / span) * 214))
+        let level = 0
+        while (
+          level < maxLevel &&
+          placed.some((mark) => mark.level === level && Math.abs(mark.x - x) < 11)
+        ) {
+          level += 1
+        }
+        placed.push({ x, level })
+        return {
+          kind: item.kind,
+          x,
+          top: 2.5 + level * 9,
+          d: MARK_ICONS[item.kind],
+          label: ctx.t(MARK_LABELS[item.kind]),
+        }
+      })
   })
 
   const place = () => {
@@ -756,12 +770,12 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
             <span class="tps-panel-value">
               <span>{rate() !== undefined ? formatRate(rate()!) : "—"}</span>
               <span class="tps-panel-unit">{ctx.t("tip.rate")}</span>
-            </span>
-
-            <span class="tps-chart" data-empty={chart().empty ? "true" : "false"}>
               <span class="tps-chart-span" aria-hidden="true">
                 {ctx.t("tip.chart")}
               </span>
+            </span>
+
+            <span class="tps-chart" data-empty={chart().empty ? "true" : "false"}>
               <svg viewBox="0 0 214 52" aria-hidden="true">
                 <defs>
                   <linearGradient id="tps-area-grad" x1="0" y1="0" x2="0" y2="1">
@@ -788,8 +802,14 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
                           transform={`translate(${mark.x.toFixed(2)} 0)`}
                         >
                           <title>{mark.label}</title>
-                          <line class="tps-marker-stem" x1="0" y1="9" x2="0" y2="52" />
-                          <g transform="translate(-4.5 2.5) scale(0.75)">
+                          <line
+                            class="tps-marker-stem"
+                            x1="0"
+                            y1={(mark.top + 8).toFixed(1)}
+                            x2="0"
+                            y2="52"
+                          />
+                          <g transform={`translate(-4.5 ${mark.top.toFixed(1)}) scale(0.75)`}>
                             <path class="tps-marker-glyph" d={mark.d} />
                           </g>
                         </g>

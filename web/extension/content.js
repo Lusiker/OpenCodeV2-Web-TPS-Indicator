@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.3.0
+// @version      1.3.1
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -506,12 +506,14 @@
     }
 
     .chart-span {
-      position: absolute;
-      inset-block-start: 1px;
-      inset-inline-end: 0;
+      margin-inline-start: auto;
+      align-self: flex-end;
+      padding-block-end: 1px;
       color: var(--v2-text-text-faint, #777);
       font-size: 9px;
       letter-spacing: 0.02em;
+      line-height: 1;
+      white-space: nowrap;
       pointer-events: none;
     }
 
@@ -703,9 +705,9 @@
       <div class="tip-value">
         <span class="tip-number"></span>
         <span class="tip-unit">${copy.unit}</span>
+        <span class="chart-span" aria-hidden="true">${copy.chartLabel}</span>
       </div>
       <div class="chart" data-empty="true">
-        <span class="chart-span" aria-hidden="true">${copy.chartLabel}</span>
         <svg viewBox="0 0 214 52" aria-hidden="true">
           <defs>
             <linearGradient id="oc-tps-area" x1="0" y1="0" x2="0" y2="1">
@@ -1319,18 +1321,29 @@
     }
 
     const width = 214
+    const maxLevel = 3
+    const placed = []
     const items = []
     for (const item of state.marks) {
       if (item.at < from) continue
       const icon = MARK_ICONS[item.kind]
       if (!icon) continue
       const x = Math.min(width, Math.max(0, ((item.at - from) / span) * width))
+      let level = 0
+      while (
+        level < maxLevel &&
+        placed.some((mark) => mark.level === level && Math.abs(mark.x - x) < 11)
+      ) {
+        level += 1
+      }
+      placed.push({ x, level })
+      const top = 2.5 + level * 9
       const label = copy[MARK_KEYS[item.kind]] ?? ""
       items.push(
         `<g class="marker" data-kind="${item.kind}" transform="translate(${x.toFixed(2)} 0)">` +
           `<title>${label}</title>` +
-          `<line class="stem" x1="0" y1="9" x2="0" y2="52"/>` +
-          `<g transform="translate(-4.5 2.5) scale(0.75)"><path class="glyph" d="${icon}"/></g>` +
+          `<line class="stem" x1="0" y1="${(top + 8).toFixed(1)}" x2="0" y2="52"/>` +
+          `<g transform="translate(-4.5 ${top.toFixed(1)}) scale(0.75)"><path class="glyph" d="${icon}"/></g>` +
           `</g>`,
       )
     }

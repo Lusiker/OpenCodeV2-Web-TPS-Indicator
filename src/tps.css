@@ -407,12 +407,14 @@
 }
 
 .tps-chart-span {
-  position: absolute;
-  inset-block-start: 1px;
-  inset-inline-end: 0;
+  margin-inline-start: auto;
+  align-self: flex-end;
+  padding-block-end: 1px;
   color: var(--v2-text-text-faint, currentColor);
   font-size: 9px;
   letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
   pointer-events: none;
 }
 

@@ -76,7 +76,7 @@ verbose 模式按时间轴绘制标记，位置与曲线共用同一个时间窗
 | 会话完成 | `session.execution.succeeded` |
 | 错误 | `session.retry.scheduled` / `session.execution.failed` / `session.step.failed` |
 
-标记保存在独立的时间线数组中，按 30 秒窗口裁剪，曲线关闭时停止绘制。图标使用内联 SVG，悬停通过 `<title>` 显示名称。
+标记保存在独立的时间线数组中，按 30 秒窗口裁剪，曲线关闭时停止绘制。图标使用内联 SVG，悬停通过 `<title>` 显示名称。时间上相邻的图标按 9px 层级向下错开，最多 4 层，避免连续事件重叠。
 
 ## 固定交互
 
