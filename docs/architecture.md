@@ -54,6 +54,30 @@ OpenCode 有两套前端宿主，插件分别以不同方式接入。
 - 网页版依次读取 `oc_locale` cookie、`<html lang>` 与 `navigator.language`，映射到 `zh`、`zht`、`en`。
 - 网页版监听 `<html lang>` 变化，切换语言后立即刷新统计字段、图注与提示文案，无需刷新页面。
 
+## 错误与警告
+
+- `session.retry.scheduled` 置为 `retry`，标题显示重试次数，红色强调。
+- `session.execution.failed` 与 `session.step.failed` 置为 `failed`。
+- 新的用户消息、步骤开始或执行成功清除错误状态。
+- 颜色通过 `@property` 注册的 `--accent` 自定义属性过渡；错误态额外使用脉冲光晕、较快的圆点扩散与扫描动画。
+- 错误态在无速度数据时也会显示标签，数值显示为 `—`。
+
+## 事件标记
+
+verbose 模式按时间轴绘制标记，位置与曲线共用同一个时间窗口：
+
+| 标记 | 事件 |
+|---|---|
+| 用户上行 | `session.inbox.delivered` |
+| 模型开始 | `session.step.started` |
+| 模型结束 | `session.step.ended` |
+| 发起工具调用 | `session.tool.called` |
+| 工具返回 | `session.tool.success` / `session.tool.failed` |
+| 会话完成 | `session.execution.succeeded` |
+| 错误 | `session.retry.scheduled` / `session.execution.failed` / `session.step.failed` |
+
+标记保存在独立的时间线数组中，按 30 秒窗口裁剪，曲线关闭时停止绘制。图标使用内联 SVG，悬停通过 `<title>` 显示名称。
+
 ## 固定交互
 
 面板有 `hover` 与 `pinned` 两种显示状态，由 `data-pinned` 与 `data-open` 两个属性表达。

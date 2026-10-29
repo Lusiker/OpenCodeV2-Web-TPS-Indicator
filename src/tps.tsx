@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
@@ -14,6 +15,16 @@ import {
 import type { SessionMessageAssistant } from "@opencode/client"
 
 type Phase = "empty" | "live" | "running" | "done"
+type ErrorKind = "retry" | "failed"
+type MarkKind =
+  | "uplink"
+  | "modelStart"
+  | "modelEnd"
+  | "toolCall"
+  | "toolResult"
+  | "done"
+  | "error"
+type Mark = { at: number; kind: MarkKind }
 
 const WINDOW_MS = 2_000
 const TICK_MS = 200
@@ -21,6 +32,27 @@ const IDLE_MS = 800
 const BARS = 5
 const SPAN_MS = 30_000
 const MAX_SAMPLES = 220
+
+const MARK_ICONS: Record<MarkKind, string> = {
+  uplink: "M6 10V3M2.6 6.4L6 3l3.4 3.4",
+  modelStart: "M6 2v7M2.6 5.6L6 9l3.4-3.4",
+  modelEnd: "M3 3h6v6H3z",
+  toolCall:
+    "M6 2.2v1.6M6 8.2v1.6M2.2 6h1.6M8.2 6h1.6M3.3 3.3l1.1 1.1M7.6 7.6l1.1 1.1M8.7 3.3L7.6 4.4M4.4 7.6L3.3 8.7",
+  toolResult: "M2.6 6.4L5 8.8l4.4-5.6",
+  done: "M2.2 6.2l2.6 2.6 5-6.2",
+  error: "M3 3l6 6M9 3l-6 6",
+}
+
+const MARK_LABELS: Record<MarkKind, string> = {
+  uplink: "mark.uplink",
+  modelStart: "mark.modelStart",
+  modelEnd: "mark.modelEnd",
+  toolCall: "mark.toolCall",
+  toolResult: "mark.toolResult",
+  done: "mark.done",
+  error: "mark.error",
+}
 
 function estimateTokens(text: string): number {
   let units = 0
@@ -78,6 +110,10 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
   const [open, setOpen] = createSignal(false)
   const [pinned, setPinned] = createSignal(false)
   const [position, setPosition] = createSignal({ left: 0, top: 0 })
+  const [error, setError] = createSignal<ErrorKind>()
+  const [attempt, setAttempt] = createSignal(0)
+  const [verbose, setVerbose] = createSignal(false)
+  const [marks, setMarks] = createSignal<Mark[]>([])
 
   let root: HTMLSpanElement | undefined
   let tag: HTMLSpanElement | undefined
@@ -118,6 +154,26 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
         : decimal().format(value)
 
   const formatTokens = (value: number) => formatCompact(value)
+
+  const mark = (kind: MarkKind) => {
+    const at = performance.now()
+    setMarks((previous) => {
+      const last = previous[previous.length - 1]
+      if (last && last.kind === kind && at - last.at < 250) return previous
+      const cutoff = at - SPAN_MS - 5_000
+      return [...previous.filter((item) => item.at >= cutoff), { at, kind }]
+    })
+  }
+
+  const fail = (kind: ErrorKind, value = 0) => {
+    setAttempt(value)
+    setError(kind)
+  }
+
+  const clearError = () => {
+    setError(undefined)
+    setAttempt(0)
+  }
 
   const completed = createMemo(() => {
     const data = props.session.server.data
@@ -183,6 +239,8 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
     setStepEst(0)
     setActive(false)
     setStartedAt(0)
+    setMarks([])
+    clearError()
   })
 
   createKeyed(
@@ -298,10 +356,44 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       const offs = [
         data.on("session.step.started", (event) => {
           if (event.data.sessionID !== id) return
+          clearError()
+          mark("modelStart")
           start(now(), true, {
             messageID: event.data.assistantMessageID,
             created: event.created,
           })
+        }),
+        data.on("session.inbox.delivered", (event) => {
+          if (event.data.sessionID !== id) return
+          clearError()
+          mark("uplink")
+        }),
+        data.on("session.execution.succeeded", (event) => {
+          if (event.data.sessionID !== id) return
+          clearError()
+          mark("done")
+        }),
+        data.on("session.retry.scheduled", (event) => {
+          if (event.data.sessionID !== id) return
+          mark("error")
+          fail("retry", event.data.attempt)
+        }),
+        data.on("session.execution.failed", (event) => {
+          if (event.data.sessionID !== id) return
+          mark("error")
+          fail("failed")
+        }),
+        data.on("session.tool.called", (event) => {
+          if (event.data.sessionID !== id) return
+          mark("toolCall")
+        }),
+        data.on("session.tool.success", (event) => {
+          if (event.data.sessionID !== id) return
+          mark("toolResult")
+        }),
+        data.on("session.tool.failed", (event) => {
+          if (event.data.sessionID !== id) return
+          mark("toolResult")
         }),
         data.on("session.text.delta", (event) => {
           if (event.data.sessionID !== id) return
@@ -321,10 +413,13 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
         }),
         data.on("session.step.ended", (event) => {
           if (event.data.sessionID !== id) return
+          mark("modelEnd")
           finish(event.data.tokens.output + event.data.tokens.reasoning)
         }),
         data.on("session.step.failed", (event) => {
           if (event.data.sessionID !== id) return
+          mark("error")
+          fail("failed")
           const tokens = event.data.tokens
           finish(tokens ? tokens.output + tokens.reasoning : undefined)
         }),
@@ -392,17 +487,21 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
     return { tokens, ms, average, peak: stepPeak(), ttft: ttft() }
   })
 
-  const chart = createMemo(() => {
+  const chartWindow = createMemo(() => {
     const at = performance.now()
     const samples = timeline().filter((sample) => sample.at >= at - SPAN_MS)
+    const from = samples.length ? Math.max(at - SPAN_MS, samples[0].at) : at - SPAN_MS
+    return { samples, from, span: Math.max(1_000, at - from) }
+  })
+
+  const chart = createMemo(() => {
+    const { samples, from, span } = chartWindow()
     if (samples.length < 2) return { empty: true, line: "", area: "", cx: 0, cy: 0 }
 
     const width = 214
     const height = 52
     const top = 4
     const floor = 2
-    const from = Math.max(at - SPAN_MS, samples[0].at)
-    const span = Math.max(1_000, at - from)
     const peak = samples.reduce((value, sample) => Math.max(value, sample.rate), 0)
     const scale = Math.max(20, Math.ceil(peak / 10) * 10)
     const points = samples.map((sample) => {
@@ -424,6 +523,19 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       cx: last[0],
       cy: last[1],
     }
+  })
+
+  const marksView = createMemo(() => {
+    if (!verbose()) return []
+    const { from, span } = chartWindow()
+    return marks()
+      .filter((item) => item.at >= from)
+      .map((item) => ({
+        kind: item.kind,
+        x: Math.min(214, Math.max(0, ((item.at - from) / span) * 214)),
+        d: MARK_ICONS[item.kind],
+        label: ctx.t(MARK_LABELS[item.kind]),
+      }))
   })
 
   const place = () => {
@@ -453,7 +565,7 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
       clearTimeout(closeTimer)
       closeTimer = undefined
     }
-    if (rate() === undefined) return
+    if (rate() === undefined && error() === undefined) return
     setOpen(true)
   }
 
@@ -492,30 +604,47 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
   })
 
   const label = () => {
+    if (error() === "retry") {
+      return attempt()
+        ? ctx.t("tip.retrying", { attempt: String(attempt()) })
+        : ctx.t("tip.retry")
+    }
+    if (error() === "failed") return ctx.t("tip.failed")
     const value = rate()
     if (value === undefined) return ctx.t("aria.empty")
     return ctx.t("aria.value", { rate: formatRate(value) })
   }
 
   const heading = () =>
-    phase() === "live"
-      ? ctx.t("tip.live")
-      : phase() === "running"
-        ? ctx.t("tip.running")
-        : ctx.t("tip.done")
+    error() === "retry"
+      ? attempt()
+        ? ctx.t("tip.retrying", { attempt: String(attempt()) })
+        : ctx.t("tip.retry")
+      : error() === "failed"
+        ? ctx.t("tip.failed")
+        : phase() === "live"
+          ? ctx.t("tip.live")
+          : phase() === "running"
+            ? ctx.t("tip.running")
+            : ctx.t("tip.done")
 
   const note = () =>
-    phase() === "live"
-      ? ctx.t("tip.note.live")
-      : phase() === "running"
-        ? ctx.t("tip.note.running")
-        : ctx.t("tip.note.exact")
+    error() === "retry"
+      ? ctx.t("tip.note.retry")
+      : error() === "failed"
+        ? ctx.t("tip.note.failed")
+        : phase() === "live"
+          ? ctx.t("tip.note.live")
+          : phase() === "running"
+            ? ctx.t("tip.note.running")
+            : ctx.t("tip.note.exact")
 
   return (
-    <Show when={rate() !== undefined}>
+    <Show when={rate() !== undefined || error() !== undefined}>
       <span
         ref={root}
         class="tps-root"
+        data-error={error() ? "true" : "false"}
         onMouseEnter={show}
         onMouseLeave={() => closeSoon()}
       >
@@ -526,6 +655,7 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
           data-state={phase()}
           data-exact={exact() ? "true" : "false"}
           data-pinned={pinned() ? "true" : "false"}
+          data-error={error() ? "true" : "false"}
           role="button"
           tabIndex={0}
           aria-pressed={pinned() ? "true" : "false"}
@@ -548,7 +678,9 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
           <span class="tps-label" aria-hidden="true">
             TPS
           </span>
-          <span class="tps-value">{formatRate(rate()!)}</span>
+          <span class="tps-value">
+            {rate() !== undefined ? formatRate(rate()!) : "—"}
+          </span>
           <span class="tps-unit" aria-hidden="true">
             tok/s
           </span>
@@ -565,6 +697,8 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
             class="tps-panel"
             data-state={phase()}
             data-pinned={pinned() ? "true" : "false"}
+            data-error={error() ? "true" : "false"}
+            data-verbose={verbose() ? "true" : "false"}
             role="tooltip"
             style={{ left: `${position().left}px`, top: `${position().top}px` }}
             onFocusIn={show}
@@ -572,6 +706,29 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
             <span class="tps-panel-head">
               <span class="tps-dot" aria-hidden="true" />
               <span class="tps-panel-heading">{heading()}</span>
+              <button
+                class="tps-verbose"
+                type="button"
+                aria-pressed={verbose() ? "true" : "false"}
+                aria-label={verbose() ? ctx.t("tip.verbose.hide") : ctx.t("tip.verbose.show")}
+                title={verbose() ? ctx.t("tip.verbose.hide") : ctx.t("tip.verbose.show")}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setVerbose((value) => !value)
+                }}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path
+                    d="M2.5 4.5h6.5M2.5 8h9M2.5 11.5h5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.3"
+                    stroke-linecap="round"
+                  />
+                  <circle cx="12.6" cy="4.5" r="1.2" fill="currentColor" />
+                </svg>
+              </button>
               <button
                 class="tps-pin"
                 type="button"
@@ -597,7 +754,7 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
             </span>
 
             <span class="tps-panel-value">
-              <span>{formatRate(rate()!)}</span>
+              <span>{rate() !== undefined ? formatRate(rate()!) : "—"}</span>
               <span class="tps-panel-unit">{ctx.t("tip.rate")}</span>
             </span>
 
@@ -621,6 +778,25 @@ export function TpsMeter(props: { session: MountedSession; active: boolean }) {
                   cy={chart().cy}
                   r="2.4"
                 />
+                <Show when={verbose()}>
+                  <g class="tps-markers">
+                    <For each={marksView()}>
+                      {(mark) => (
+                        <g
+                          class="tps-marker"
+                          data-kind={mark.kind}
+                          transform={`translate(${mark.x.toFixed(2)} 0)`}
+                        >
+                          <title>{mark.label}</title>
+                          <line class="tps-marker-stem" x1="0" y1="9" x2="0" y2="52" />
+                          <g transform="translate(-4.5 2.5) scale(0.75)">
+                            <path class="tps-marker-glyph" d={mark.d} />
+                          </g>
+                        </g>
+                      )}
+                    </For>
+                  </g>
+                </Show>
               </svg>
             </span>
 

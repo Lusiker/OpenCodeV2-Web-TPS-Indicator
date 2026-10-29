@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.2.4
+// @version      1.3.0
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -29,6 +29,26 @@
   const BARS = 5
   const SPAN_MS = 30000
   const MAX_SAMPLES = 220
+
+  const MARK_ICONS = {
+    uplink: "M6 10V3M2.6 6.4L6 3l3.4 3.4",
+    modelStart: "M6 2v7M2.6 5.6L6 9l3.4-3.4",
+    modelEnd: "M3 3h6v6H3z",
+    toolCall: "M6 2.2v1.6M6 8.2v1.6M2.2 6h1.6M8.2 6h1.6M3.3 3.3l1.1 1.1M7.6 7.6l1.1 1.1M8.7 3.3L7.6 4.4M4.4 7.6L3.3 8.7",
+    toolResult: "M2.6 6.4L5 8.8l4.4-5.6",
+    done: "M2.2 6.2l2.6 2.6 5-6.2",
+    error: "M3 3l6 6M9 3l-6 6",
+  }
+
+  const MARK_KEYS = {
+    uplink: "markUplink",
+    modelStart: "markModelStart",
+    modelEnd: "markModelEnd",
+    toolCall: "markToolCall",
+    toolResult: "markToolResult",
+    done: "markDone",
+    error: "markError",
+  }
 
   function cookieValue(name) {
     for (const part of document.cookie.split(";")) {
@@ -71,6 +91,19 @@
       noteLive: "根据流式文本、推理与工具参数估算。",
       noteExact: "根据本段 token 用量计算。",
       noteRunning: "模型仍在工作，显示最近一次测得的速度。",
+      retrying: (attempt) => (attempt ? `自动重试中 · 第 ${attempt} 次` : "自动重试中"),
+      failed: "执行失败",
+      noteRetry: "请求出错，已安排自动重试。",
+      noteFailed: "本次执行失败，可在会话详情查看错误信息。",
+      verboseOn: "隐藏事件标记",
+      verboseOff: "显示事件标记",
+      markUplink: "用户上行",
+      markModelStart: "模型开始",
+      markModelEnd: "模型结束",
+      markToolCall: "发起工具调用",
+      markToolResult: "工具返回",
+      markDone: "会话完成",
+      markError: "错误",
       aria: (rate) => `输出速度：每秒 ${rate} 个 token`,
     },
     zht: {
@@ -92,6 +125,19 @@
       noteLive: "根據串流文字、推理與工具參數估算。",
       noteExact: "根據本段 token 用量計算。",
       noteRunning: "模型仍在運作，顯示最近一次測得的速度。",
+      retrying: (attempt) => (attempt ? `自動重試中 · 第 ${attempt} 次` : "自動重試中"),
+      failed: "執行失敗",
+      noteRetry: "請求出錯，已安排自動重試。",
+      noteFailed: "本次執行失敗，可在會話詳情查看錯誤資訊。",
+      verboseOn: "隱藏事件標記",
+      verboseOff: "顯示事件標記",
+      markUplink: "使用者上行",
+      markModelStart: "模型開始",
+      markModelEnd: "模型結束",
+      markToolCall: "發起工具呼叫",
+      markToolResult: "工具回傳",
+      markDone: "會話完成",
+      markError: "錯誤",
       aria: (rate) => `輸出速度：每秒 ${rate} 個 token`,
     },
     en: {
@@ -103,6 +149,19 @@
       noteLive: "Estimated from streamed text, reasoning and tool arguments.",
       noteExact: "Computed from the step's token usage.",
       noteRunning: "The latest measured speed while the model is working.",
+      retrying: (attempt) => (attempt ? `Retrying · attempt ${attempt}` : "Retrying"),
+      failed: "Run failed",
+      noteRetry: "The request failed and a retry is scheduled.",
+      noteFailed: "This run failed. Open the session details for the error.",
+      verboseOn: "Hide event markers",
+      verboseOff: "Show event markers",
+      markUplink: "User message",
+      markModelStart: "Model start",
+      markModelEnd: "Model end",
+      markToolCall: "Tool call",
+      markToolResult: "Tool result",
+      markDone: "Run complete",
+      markError: "Error",
       statPeak: "Peak",
       statAvg: "Average",
       statTtft: "First token",
@@ -121,8 +180,15 @@
   let copy = dictionaries[locale]
 
   const css = `
+    @property --accent {
+      syntax: "<color>";
+      inherits: true;
+      initial-value: #22c55e;
+    }
+
     :host {
       --accent: var(--v2-state-fg-success, #22c55e);
+      transition: --accent 320ms ease;
       display: inline-flex;
       align-items: center;
       height: 22px;
@@ -131,6 +197,10 @@
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       vertical-align: middle;
+    }
+
+    :host([data-error="true"]) {
+      --accent: var(--v2-state-fg-danger, #ef4444);
     }
 
     * { box-sizing: border-box; }
@@ -193,6 +263,24 @@
     .tag[data-state="done"] {
       border-color: color-mix(in srgb, var(--accent) 18%, var(--v2-border-border-muted, rgba(127, 127, 127, 0.24)));
     }
+
+    .tag[data-error="true"] {
+      border-color: color-mix(in srgb, var(--accent) 42%, var(--v2-border-border-muted, rgba(127, 127, 127, 0.24)));
+      background:
+        linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--accent) 13%, var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.08))),
+          color-mix(in srgb, var(--accent) 4%, var(--v2-background-bg-base, transparent))
+        );
+      color: var(--v2-text-text-base, #eee);
+      animation: oc-tps-alert 1.5s ease-in-out infinite;
+    }
+
+    .tag[data-error="true"] .dot { opacity: 1; }
+
+    .tag[data-error="true"] .dot::after { animation-duration: 0.9s; }
+
+    .tag[data-error="true"] .scan { animation-duration: 1.1s; }
 
     .tag[data-pinned="true"] {
       border-color: color-mix(in srgb, var(--accent) 34%, var(--v2-border-border-muted, rgba(127, 127, 127, 0.24)));
@@ -327,6 +415,16 @@
         0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
     }
 
+    .tip[data-error="true"] {
+      border-color: color-mix(in srgb, var(--accent) 38%, var(--v2-border-border-muted, rgba(127, 127, 127, 0.24)));
+      box-shadow:
+        var(--v2-elevation-floating, 0 8px 24px rgba(0, 0, 0, 0.24)),
+        0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+        0 0 30px -18px var(--accent);
+    }
+
+    .tip[data-error="true"] .tip-head { color: var(--v2-text-text-base, #eee); }
+
     .tip-head {
       display: flex;
       align-items: center;
@@ -338,13 +436,13 @@
 
     .tip-head .dot { opacity: 1; }
 
-    .pin {
+    .pin,
+    .verbose {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       width: 18px;
       height: 18px;
-      margin-inline-start: auto;
       padding: 0;
       border: 1px solid transparent;
       border-radius: 5px;
@@ -357,18 +455,25 @@
         border-color 140ms ease;
     }
 
-    .pin:hover {
+    .verbose { margin-inline-start: auto; }
+
+    .pin { margin-inline-start: 0; }
+
+    .pin:hover,
+    .verbose:hover {
       color: var(--v2-text-text-base, #eee);
       background: color-mix(in srgb, var(--v2-text-text-base, #fff) 9%, transparent);
     }
 
-    .pin[aria-pressed="true"] {
+    .pin[aria-pressed="true"],
+    .verbose[aria-pressed="true"] {
       border-color: color-mix(in srgb, var(--accent) 34%, transparent);
       background: color-mix(in srgb, var(--accent) 13%, transparent);
       color: var(--accent);
     }
 
-    .pin svg { display: block; width: 11px; height: 11px; }
+    .pin svg,
+    .verbose svg { display: block; width: 11px; height: 11px; }
 
     .tip-value {
       display: flex;
@@ -440,6 +545,33 @@
     .chart[data-empty="true"] .area,
     .chart[data-empty="true"] .edge { opacity: 0; }
 
+    .markers { display: none; }
+
+    .tip[data-verbose="true"] .markers { display: block; }
+
+    .marker { color: var(--v2-text-text-muted, #999); }
+
+    .marker[data-kind="uplink"] { color: var(--v2-state-fg-info, #38bdf8); }
+    .marker[data-kind="done"] { color: var(--v2-state-fg-success, #22c55e); }
+    .marker[data-kind="error"] { color: var(--v2-state-fg-danger, #ef4444); }
+
+    .marker .stem {
+      stroke: currentColor;
+      stroke-opacity: 0.24;
+      stroke-width: 1;
+      stroke-dasharray: 2 3;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .marker .glyph {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+
     .chart[data-empty="false"] .line,
     .chart[data-empty="false"] .area,
     .chart[data-empty="false"] .edge { opacity: 1; transition: opacity 160ms ease; }
@@ -506,6 +638,19 @@
       50% { opacity: 0.35; }
     }
 
+    @keyframes oc-tps-alert {
+      0%, 100% {
+        box-shadow:
+          0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+          0 0 14px -8px color-mix(in srgb, var(--accent) 62%, transparent);
+      }
+      50% {
+        box-shadow:
+          0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
+          0 0 22px -6px color-mix(in srgb, var(--accent) 82%, transparent);
+      }
+    }
+
     @media (max-width: 767px) {
       .tag { gap: 4px; padding-inline: 6px; }
       .label, .unit, .bars { display: none; }
@@ -542,6 +687,12 @@
       <div class="tip-head">
         <span class="dot" aria-hidden="true"></span>
         <span class="tip-heading"></span>
+        <button class="verbose" type="button" aria-pressed="false" aria-label="${copy.verboseOff}" title="${copy.verboseOff}">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.5 4.5h6.5M2.5 8h9M2.5 11.5h5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="12.6" cy="4.5" r="1.2" fill="currentColor"/>
+          </svg>
+        </button>
         <button class="pin" type="button" aria-pressed="false" aria-label="${copy.pinOn}" title="${copy.pinOn}">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M8 1.9a4.7 4.7 0 0 0-4.7 4.7c0 3.4 4.7 7.5 4.7 7.5s4.7-4.1 4.7-7.5A4.7 4.7 0 0 0 8 1.9Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
@@ -566,6 +717,7 @@
           <path class="area" d=""/>
           <path class="line" d=""/>
           <circle class="edge" cx="0" cy="0" r="2.4"/>
+          <g class="markers"></g>
         </svg>
       </div>
       <div class="stats">
@@ -588,10 +740,12 @@
   const tipNumber = shadow.querySelector(".tip-number")
   const tipNote = shadow.querySelector(".tip-note")
   const pinButton = shadow.querySelector(".pin")
+  const verboseButton = shadow.querySelector(".verbose")
   const chart = shadow.querySelector(".chart")
   const chartArea = shadow.querySelector(".chart .area")
   const chartLine = shadow.querySelector(".chart .line")
   const chartEdge = shadow.querySelector(".chart .edge")
+  const markers = shadow.querySelector(".markers")
   const stats = Object.fromEntries(
     [...shadow.querySelectorAll(".stat .v")].map((node) => [node.dataset.k, node]),
   )
@@ -607,6 +761,9 @@
     stepMs: undefined,
     stepPeak: undefined,
     ttft: undefined,
+    error: undefined,
+    attempt: 0,
+    marks: [],
     stepCreated: undefined,
     stepEventCreated: undefined,
     stepEventAt: 0,
@@ -735,14 +892,27 @@
 
   function render() {
     const rate = state.rate
-    const visible = rate !== undefined
+    const error = state.error
+    const visible = rate !== undefined || error !== undefined
     host.style.display = visible ? "inline-flex" : "none"
+    host.dataset.error = error ? "true" : "false"
 
     tag.dataset.state = state.phase
     tag.dataset.exact = state.exact ? "true" : "false"
-    value.textContent = visible ? formatRate(rate) : "—"
-    const label = visible ? copy.aria(formatRate(rate)) : ""
-    tag.setAttribute("aria-label", label)
+    tag.dataset.error = error ? "true" : "false"
+    value.textContent = rate !== undefined ? formatRate(rate) : "—"
+
+    const heading =
+      error === "retry"
+        ? copy.retrying(state.attempt)
+        : error === "failed"
+          ? copy.failed
+          : state.phase === "live"
+            ? copy.live
+            : state.phase === "running"
+              ? copy.running
+              : copy.done
+    tag.setAttribute("aria-label", visible ? heading : "")
 
     const recent = state.history.slice(-BARS)
     const peak = Math.max(20, ...recent)
@@ -752,13 +922,9 @@
     })
 
     tip.dataset.state = state.phase
-    tipHeading.textContent =
-      state.phase === "live"
-        ? copy.live
-        : state.phase === "running"
-          ? copy.running
-          : copy.done
-    tipNumber.textContent = visible ? formatRate(rate) : "—"
+    tip.dataset.error = error ? "true" : "false"
+    tipHeading.textContent = heading
+    tipNumber.textContent = rate !== undefined ? formatRate(rate) : "—"
 
     const exact = state.exact && state.stepTokens !== undefined && state.stepMs !== undefined
     const liveTokens = state.stepEst
@@ -777,16 +943,38 @@
     stats.time.textContent = stepMs > 0 ? formatSeconds(stepMs) : "—"
 
     tipNote.textContent =
-      state.phase === "live"
-        ? copy.noteLive
-        : state.phase === "running"
-          ? copy.noteRunning
-          : copy.noteExact
+      error === "retry"
+        ? copy.noteRetry
+        : error === "failed"
+          ? copy.noteFailed
+          : state.phase === "live"
+            ? copy.noteLive
+            : state.phase === "running"
+              ? copy.noteRunning
+              : copy.noteExact
 
     if (tip.dataset.open === "true" && visible) {
       positionTip()
       drawChart()
     }
+  }
+
+  function mark(kind) {
+    const at = now()
+    const last = state.marks[state.marks.length - 1]
+    if (last && last.kind === kind && at - last.at < 250) return
+    state.marks.push({ at, kind })
+    const cutoff = at - SPAN_MS - 5_000
+    if (state.marks.length > 300) {
+      state.marks = state.marks.filter((item) => item.at >= cutoff)
+    }
+  }
+
+  function setError(kind, attempt = 0) {
+    if (state.error === kind && state.attempt === attempt) return
+    state.error = kind
+    state.attempt = attempt
+    render()
   }
 
   function reset() {
@@ -803,6 +991,9 @@
     state.stepMessageID = undefined
     state.stepEst = 0
     state.lastRate = undefined
+    state.error = undefined
+    state.attempt = 0
+    state.marks = []
     state.history = []
     state.timeline = []
     state.samples = []
@@ -1055,7 +1246,7 @@
     if (host.previousElementSibling !== trigger || host.parentElement !== trigger.parentElement) {
       trigger.after(host)
     }
-    host.style.display = state.rate === undefined ? "none" : "inline-flex"
+    host.style.display = state.rate === undefined && state.error === undefined ? "none" : "inline-flex"
   }
 
   function positionTip() {
@@ -1085,40 +1276,69 @@
     if (tip.dataset.open !== "true") return
     const at = now()
     const samples = state.timeline.filter((sample) => sample.at >= at - SPAN_MS)
+    const from = samples.length ? Math.max(at - SPAN_MS, samples[0].at) : at - SPAN_MS
+    const span = Math.max(1_000, at - from)
+
     if (samples.length < 2) {
       chart.dataset.empty = "true"
+    } else {
+      chart.dataset.empty = "false"
+
+      const width = 214
+      const height = 52
+      const top = 4
+      const floor = 2
+      let peak = 0
+      for (const sample of samples) peak = Math.max(peak, sample.rate)
+      const scale = Math.max(20, Math.ceil(peak / 10) * 10)
+      const points = samples.map((sample) => {
+        const x = (Math.min(span, Math.max(0, sample.at - from)) / span) * width
+        const y = height - floor - Math.min(1, sample.rate / scale) * (height - top - floor)
+        return [x, y]
+      })
+
+      let line = `M${points[0][0].toFixed(2)} ${points[0][1].toFixed(2)}`
+      for (let index = 1; index < points.length; index++) {
+        line += `L${points[index][0].toFixed(2)} ${points[index][1].toFixed(2)}`
+      }
+      chartLine.setAttribute("d", line)
+      chartArea.setAttribute("d", `${line}L${width} ${height}L${points[0][0].toFixed(2)} ${height}Z`)
+
+      const last = points[points.length - 1]
+      chartEdge.setAttribute("cx", last[0].toFixed(2))
+      chartEdge.setAttribute("cy", last[1].toFixed(2))
+    }
+
+    drawMarks(from, span)
+  }
+
+  function drawMarks(from, span) {
+    if (!verbose) {
+      markers.replaceChildren()
       return
     }
-    chart.dataset.empty = "false"
 
     const width = 214
-    const height = 52
-    const top = 4
-    const floor = 2
-    const from = Math.max(at - SPAN_MS, samples[0].at)
-    const span = Math.max(1_000, at - from)
-    let peak = 0
-    for (const sample of samples) peak = Math.max(peak, sample.rate)
-    const scale = Math.max(20, Math.ceil(peak / 10) * 10)
-    const points = samples.map((sample) => {
-      const x = (Math.min(span, Math.max(0, sample.at - from)) / span) * width
-      const y = height - floor - Math.min(1, sample.rate / scale) * (height - top - floor)
-      return [x, y]
-    })
-
-    let line = `M${points[0][0].toFixed(2)} ${points[0][1].toFixed(2)}`
-    for (let index = 1; index < points.length; index++) {
-      line += `L${points[index][0].toFixed(2)} ${points[index][1].toFixed(2)}`
+    const items = []
+    for (const item of state.marks) {
+      if (item.at < from) continue
+      const icon = MARK_ICONS[item.kind]
+      if (!icon) continue
+      const x = Math.min(width, Math.max(0, ((item.at - from) / span) * width))
+      const label = copy[MARK_KEYS[item.kind]] ?? ""
+      items.push(
+        `<g class="marker" data-kind="${item.kind}" transform="translate(${x.toFixed(2)} 0)">` +
+          `<title>${label}</title>` +
+          `<line class="stem" x1="0" y1="9" x2="0" y2="52"/>` +
+          `<g transform="translate(-4.5 2.5) scale(0.75)"><path class="glyph" d="${icon}"/></g>` +
+          `</g>`,
+      )
     }
-    chartLine.setAttribute("d", line)
-    chartArea.setAttribute("d", `${line}L${width} ${height}L${points[0][0].toFixed(2)} ${height}Z`)
-
-    const last = points[points.length - 1]
-    chartEdge.setAttribute("cx", last[0].toFixed(2))
-    chartEdge.setAttribute("cy", last[1].toFixed(2))
+    markers.innerHTML = items.join("")
   }
 
   let pinned = false
+  let verbose = false
   let closeTimer
 
   function openTip() {
@@ -1126,7 +1346,7 @@
       clearTimeout(closeTimer)
       closeTimer = undefined
     }
-    if (state.rate === undefined) return
+    if (state.rate === undefined && state.error === undefined) return
     positionTip()
     drawChart()
   }
@@ -1160,6 +1380,9 @@
     const pinLabel = pinned ? copy.pinOff : copy.pinOn
     pinButton.title = pinLabel
     pinButton.setAttribute("aria-label", pinLabel)
+    const verboseLabel = verbose ? copy.verboseOn : copy.verboseOff
+    verboseButton.title = verboseLabel
+    verboseButton.setAttribute("aria-label", verboseLabel)
     render()
   }
 
@@ -1207,6 +1430,18 @@
     setPinned(!pinned)
   })
 
+  verboseButton.addEventListener("click", (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    verbose = !verbose
+    tip.dataset.verbose = verbose ? "true" : "false"
+    verboseButton.setAttribute("aria-pressed", verbose ? "true" : "false")
+    const label = verbose ? copy.verboseOn : copy.verboseOff
+    verboseButton.title = label
+    verboseButton.setAttribute("aria-label", label)
+    drawChart()
+  })
+
   document.addEventListener(
     "keydown",
     (event) => {
@@ -1241,10 +1476,35 @@
 
     switch (event.type) {
       case "session.step.started":
+        setError(undefined)
+        mark("modelStart")
         startStep(true, {
           messageID: event.data.assistantMessageID,
           created: event.created,
         })
+        break
+      case "session.inbox.delivered":
+        setError(undefined)
+        mark("uplink")
+        break
+      case "session.execution.succeeded":
+        setError(undefined)
+        mark("done")
+        break
+      case "session.retry.scheduled":
+        mark("error")
+        setError("retry", event.data.attempt)
+        break
+      case "session.execution.failed":
+        mark("error")
+        setError("failed")
+        break
+      case "session.tool.called":
+        mark("toolCall")
+        break
+      case "session.tool.success":
+      case "session.tool.failed":
+        mark("toolResult")
         break
       case "session.text.delta":
       case "session.reasoning.delta":
@@ -1252,11 +1512,14 @@
         addDelta(event.data.delta)
         break
       case "session.step.ended":
+        mark("modelEnd")
         finishStep(
           (event.data.tokens?.output ?? 0) + (event.data.tokens?.reasoning ?? 0),
         )
         break
       case "session.step.failed":
+        mark("error")
+        setError("failed")
         finishStep(
           event.data.tokens
             ? (event.data.tokens.output ?? 0) + (event.data.tokens.reasoning ?? 0)

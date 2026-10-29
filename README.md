@@ -1,10 +1,14 @@
 # TPS Meter
 
+简体中文 · [English](README.en.md)
+
 在 OpenCode 会话页右上角的上下文进度环旁显示实时 token/s，并提供近 30 秒波动面板。
 
 - 标签：实时速度、五段速度条、脉冲圆点与扫描高光。
 - 面板：悬停展开，显示当前速度、30 秒曲线、峰值、均值、首字延迟、本段 token 与耗时。
 - 固定：点击标签或图钉把面板固定在屏幕上，再次点击恢复悬停显示。
+- 错误状态：执行失败或自动重试时，标签与面板切换为红色并显示重试次数。
+- 事件标记：verbose 模式在曲线上标注用户上行、模型开始与结束、工具调用与返回、会话完成、错误。
 - 形态：网页版用户脚本、Chrome 扩展、OpenCode Desktop 原生 GUI 插件，三者视觉与指标一致。
 
 ## 安装
@@ -33,8 +37,27 @@
 | 悬停标签 | 展开面板，显示实时指标 |
 | 点击标签或图钉 | 固定面板；再次点击恢复悬停 |
 | 固定后点击页面其他位置 | 面板保持固定 |
+| 点击事件标记开关 | 显示或隐藏曲线上的事件标记，默认关闭 |
 | `Escape` | 关闭并解除固定 |
 | 指针离开标签与面板 | 悬停状态下收起，固定状态不受影响 |
+
+## 错误与事件标记
+
+- 收到 `session.retry.scheduled` 时标签与面板转为红色，标题显示「自动重试中 · 第 N 次」。
+- 收到 `session.execution.failed` 或 `session.step.failed` 时标题显示「执行失败」。
+- 新的消息、步骤开始或执行成功会恢复正常配色。
+- 颜色切换通过注册的自定义属性过渡，标签同时使用红色脉冲光晕、较快的圆点扩散与扫描动画。
+- verbose 开关位于图钉左侧，开启后曲线顶部显示事件图标，悬停图标可查看事件名称。
+
+| 标记 | 事件 |
+|---|---|
+| 用户上行 | `session.inbox.delivered` |
+| 模型开始 | `session.step.started` |
+| 模型结束 | `session.step.ended` |
+| 发起工具调用 | `session.tool.called` |
+| 工具返回 | `session.tool.success` / `session.tool.failed` |
+| 会话完成 | `session.execution.succeeded` |
+| 错误 | `session.retry.scheduled` / `session.execution.failed` / `session.step.failed` |
 
 ## 演示
 
