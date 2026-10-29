@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenCode TPS Meter
 // @namespace    https://opencode.ai/
-// @version      1.3.1
+// @version      1.3.2
 // @description  Live tokens per second beside the context ring in the OpenCode web UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -36,7 +36,7 @@
     modelEnd: "M3 3h6v6H3z",
     toolCall: "M6 2.2v1.6M6 8.2v1.6M2.2 6h1.6M8.2 6h1.6M3.3 3.3l1.1 1.1M7.6 7.6l1.1 1.1M8.7 3.3L7.6 4.4M4.4 7.6L3.3 8.7",
     toolResult: "M2.6 6.4L5 8.8l4.4-5.6",
-    done: "M2.2 6.2l2.6 2.6 5-6.2",
+    done: "M6 1.8a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4ZM3.7 6.2l1.7 1.7 3-3.5",
     error: "M3 3l6 6M9 3l-6 6",
   }
 
